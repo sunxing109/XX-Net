@@ -2,7 +2,7 @@ import subprocess
 import threading
 import os
 import sys
-import config
+from config import config
 
 from xlog import getLogger
 xlog = getLogger("launcher")
@@ -18,13 +18,17 @@ root_path = os.path.abspath(os.path.join(current_path, os.pardir))
 if root_path not in sys.path:
     sys.path.append(root_path)
 
+data_path = os.path.abspath(os.path.join(root_path, os.pardir, os.pardir, 'data'))
+data_launcher_path = os.path.join(data_path, 'launcher')
+running_file = os.path.join(data_launcher_path, "Running.Lck")
+
 
 def start(module):
     if not os.path.isdir(os.path.join(root_path, module)):
         return
 
     try:
-        if module not in config.config["modules"]:
+        if module not in config.all_modules:
             xlog.error("module not exist %s", module)
             raise Exception()
 
@@ -37,15 +41,15 @@ def start(module):
 
         if os.path.isfile(os.path.join(root_path, module, "__init__.py")):
             if "imp" not in proc_handler[module]:
-                proc_handler[module]["imp"] = __import__(module, globals(), locals(), ['local', 'start'], -1)
+                proc_handler[module]["imp"] = __import__(module, globals(), locals(), ['local'], 0)
 
-            _start = proc_handler[module]["imp"].start
-            p = threading.Thread(target=_start.main, args=([xargs]))
+            _local = proc_handler[module]["imp"].local
+            p = threading.Thread(target=_local.start, args=([xargs]))
             p.daemon = True
             p.start()
             proc_handler[module]["proc"] = p
 
-            while not _start.client.ready:
+            while not _local.is_ready():
                 time.sleep(0.1)
         else:
             script_path = os.path.join(root_path, module, 'start.py')
@@ -71,11 +75,11 @@ def stop(module):
 
         if os.path.isfile(os.path.join(root_path, module, "__init__.py")):
 
-            _start = proc_handler[module]["imp"].start
+            _local = proc_handler[module]["imp"].local
             xlog.debug("start to terminate %s module", module)
-            _start.client.terminate()
+            _local.stop()
             xlog.debug("module %s stopping", module)
-            while _start.client.ready:
+            while _local.is_ready():
                 time.sleep(0.1)
         else:
             proc_handler[module]["proc"].terminate()  # Sends SIGTERM
@@ -102,13 +106,17 @@ def call_each_module(api_name, args):
             xlog.exception("call %s api:%s, except:%r", module, api_name, e)
 
 
-def start_all_auto():
-    for module in config.modules:
+def start_all_auto():    
+    global running_file
+    if not os.path.isfile(running_file):
+        open(running_file, 'a').close()
+
+    for module in config.all_modules:
         if module in ["launcher"]:
             continue
         if not os.path.isdir(os.path.join(root_path, module)):
             continue
-        if "auto_start" in config.config['modules'][module] and config.config['modules'][module]["auto_start"]:
+        if getattr(config, "enable_" + module):
             start_time = time.time()
             start(module)
             # web_control.confirm_module_ready(config.get(["modules", module, "control_port"], 0))
@@ -117,6 +125,12 @@ def start_all_auto():
 
 
 def stop_all():
+    global running_file
     running_modules = [k for k in proc_handler]
     for module in running_modules:
         stop(module)
+
+    try:
+        os.remove(running_file)
+    except:
+        pass

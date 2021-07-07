@@ -1,33 +1,37 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 # coding:utf-8
-
 import sys
 import os
-import json
 import threading
+import json
 
 current_path = os.path.dirname(os.path.abspath(__file__))
 root_path = os.path.abspath( os.path.join(current_path, os.pardir, os.pardir, os.pardir))
+local_path = os.path.abspath( os.path.join(current_path, os.pardir))
 data_path = os.path.abspath(os.path.join(root_path, os.pardir, os.pardir, 'data'))
 module_data_path = os.path.join(data_path, 'x_tunnel')
-python_path = os.path.abspath( os.path.join(root_path, 'python27', '1.0'))
+python_path = root_path
 
-sys.path.append(root_path)
 
-noarch_lib = os.path.abspath( os.path.join(python_path, 'lib', 'noarch'))
-sys.path.insert(0, noarch_lib)
+if __name__ == "__main__":
+    sys.path.append(root_path)
+    sys.path.append(local_path)
 
-if sys.platform == "win32":
-    win32_lib = os.path.abspath( os.path.join(python_path, 'lib', 'win32'))
-    sys.path.append(win32_lib)
-elif sys.platform.startswith("linux"):
-    linux_lib = os.path.abspath( os.path.join(python_path, 'lib', 'linux'))
-    sys.path.insert(1, linux_lib)
-elif sys.platform == "darwin":
-    darwin_lib = os.path.abspath( os.path.join(python_path, 'lib', 'darwin'))
-    sys.path.append(darwin_lib)
-    extra_lib = "/System/Library/Frameworks/Python.framework/Versions/2.7/Extras/lib/python"
-    sys.path.append(extra_lib)
+    noarch_lib = os.path.abspath( os.path.join(python_path, 'lib', 'noarch'))
+    sys.path.append(noarch_lib)
+
+    if sys.platform == "win32":
+        win32_lib = os.path.abspath( os.path.join(python_path, 'lib', 'win32'))
+        sys.path.append(win32_lib)
+    elif sys.platform.startswith("linux"):
+        linux_lib = os.path.abspath( os.path.join(python_path, 'lib', 'linux'))
+        sys.path.append(linux_lib)
+    elif sys.platform == "darwin":
+        darwin_lib = os.path.abspath( os.path.join(python_path, 'lib', 'darwin'))
+        sys.path.append(darwin_lib)
+        extra_lib = "/System/Library/Frameworks/Python.framework/Versions/2.7/Extras/lib/python"
+        sys.path.append(extra_lib)
+
 
 
 import utils
@@ -40,8 +44,8 @@ from front_base.connect_creator import ConnectCreator
 from front_base.check_ip import CheckIp
 from front_base.host_manager import HostManagerBase
 
-
-from config import Config
+from cloudflare_front.config import Config
+from cloudflare_front import front
 
 
 def check_all_domain(check_ip):
@@ -118,44 +122,49 @@ def check_all_ip(check_ip):
 
 
 if __name__ == "__main__":
+    # format: [ip] [domain [sni] ]
+
     # case 1: only ip
-    # case 2: ip + domain
-    #    connect use domain
+    # case 2: ip domain
+    # case 3: ip domain sni
+    # case 4: domain
+    # case 5: domain sni
 
-    default_ip = "141.101.120.131"
-
-    host = "xx-net.net"
+    ip = "141.101.120.131"
+    host = "v3.freena.cf"
     sni = host
-    if len(sys.argv) > 1:
-        ip = sys.argv[1]
-        if not utils.check_ip_valid(ip):
-            ip = default_ip
-            sni = sys.argv[1]
-    else:
-        ip = default_ip
-        print("Usage: check_ip.py [ip] [top_domain] [wait_time=0]")
+
+    args = list(sys.argv[1:])
+
+    if len(args):
+        if utils.check_ip_valid(args[0]):
+            ip = args.pop(0)
+
+    if len(args):
+        host = args.pop(0)
+        sni = host
+
+    if len(args):
+        sni = args.pop(0)
+
+    # print("Usage: check_ip.py [ip] [top_domain] [wait_time=0]")
     xlog.info("test ip:%s", ip)
-
-    if len(sys.argv) > 2:
-        host = sys.argv[2]
     xlog.info("host:%s", host)
+    xlog.info("sni:%s", sni)
 
-    if len(sys.argv) > 3:
-        wait_time = int(sys.argv[3])
-    else:
-        wait_time = 0
+    wait_time = 0
 
     config_path = os.path.join(module_data_path, "cloudflare_front.json")
     config = Config(config_path)
 
-    openssl_context = SSLContext(logger)
+    ca_certs = os.path.join(current_path, "cacert.pem")
+    openssl_context = SSLContext(logger, ca_certs=ca_certs)
     host_manager = HostManagerBase()
     connect_creator = ConnectCreator(logger, config, openssl_context, host_manager, debug=True)
     check_ip = CheckIp(logger, config, connect_creator)
 
     #check_all_domain(check_ip)
     #check_all_ip(check_ip)
-    #exit(0)
 
     res = check_ip.check_ip(ip, sni=sni, host=host, wait_time=wait_time)
     if not res:
@@ -164,3 +173,7 @@ if __name__ == "__main__":
         xlog.info("success, domain:%s handshake:%d", res.host, res.handshake_time)
     else:
         xlog.warn("not support")
+
+    front.stop()
+    sys.exit(0)
+    exit(0)

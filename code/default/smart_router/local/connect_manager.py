@@ -9,15 +9,15 @@ import struct
 if __name__ == '__main__':
     current_path = os.path.dirname(os.path.abspath(__file__))
     root_path = os.path.abspath(os.path.join(current_path, os.pardir))
-    python_path = os.path.join(root_path, 'python27', '1.0')
+    python_path = root_path
     noarch_lib = os.path.join(python_path, 'lib', 'noarch')
     sys.path.append(noarch_lib)
 
 
-from socket_wrap import SocketWrap
+from .socket_wrap import SocketWrap
 import simple_queue
 import socks
-import global_var as g
+from . import global_var as g
 from xlog import getLogger
 xlog = getLogger("smart_router")
 
@@ -51,6 +51,7 @@ class ConnectManager(object):
         self.connect_threads = connect_threads
 
         self.running = True
+        threading.Thread(target=self.check_thread).start()
 
     def stop(self):
         self.running = False
@@ -59,12 +60,15 @@ class ConnectManager(object):
         while self.running:
             time_now = time.time()
             with self.lock:
-                for host_port in self.cache:
-                    cache = self.cache[host_port]
-                    for cc in list(cache):
-                        if time_now - cc["create_time"] > self.connection_timeout:
-                            cache.remove(cc)
-                            cc["conn"].close()
+                for host_port in list(self.cache.keys()):
+                    try:
+                        cache = self.cache[host_port]
+                        for cc in list(cache):
+                            if time_now - cc["create_time"] > self.connection_timeout:
+                                cache.remove(cc)
+                                cc["conn"].close()
+                    except:
+                        pass
 
             time.sleep(1)
 
@@ -93,9 +97,9 @@ class ConnectManager(object):
 
     def create_connect(self, queue, host, ip, port, timeout=5):
         if int(g.config.PROXY_ENABLE):
-            sock = socks.socksocket(socket.AF_INET if ':' not in ip else socket.AF_INET6)
+            sock = socks.socksocket(socket.AF_INET if b':' not in ip else socket.AF_INET6)
         else:
-            sock = socket.socket(socket.AF_INET if ':' not in ip else socket.AF_INET6)
+            sock = socket.socket(socket.AF_INET if b':' not in ip else socket.AF_INET6)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         # set struct linger{l_onoff=1,l_linger=0} to avoid 10048 socket error
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
@@ -128,9 +132,7 @@ class ConnectManager(object):
             return sock
 
         ip_rate = {}
-        for ipd in ips:
-            ipl = ipd.split("|")
-            ip = ipl[0]
+        for ip in ips:
             connect_time = g.ip_cache.get_connect_time(ip, port)
             if connect_time >= 8000:
                 continue
@@ -140,7 +142,7 @@ class ConnectManager(object):
         if not ip_rate:
             return None
 
-        ip_time = sorted(ip_rate.items(), key=operator.itemgetter(1))
+        ip_time = sorted(list(ip_rate.items()), key=operator.itemgetter(1))
         ordered_ips = [ip for ip, rate in ip_time]
 
         wait_queue = simple_queue.Queue()

@@ -1,8 +1,8 @@
 import os
 import sys
-
+import json
 current_path = os.path.dirname(os.path.abspath(__file__))
-python_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir, 'python27', '1.0'))
+python_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir))
 
 noarch_lib = os.path.abspath(os.path.join(python_path, 'lib', 'noarch'))
 sys.path.append(noarch_lib)
@@ -35,13 +35,13 @@ from xlog import getLogger
 xlog = getLogger("x_tunnel")
 
 import xconfig
-from proxy_handler import Socks5Server
-import global_var as g
-import proxy_session
+from x_tunnel.local.proxy_handler import Socks5Server
+from x_tunnel.local import global_var as g
+from x_tunnel.local import proxy_session
 import simple_http_server
-import front_dispatcher
+from x_tunnel.local import front_dispatcher
 
-import web_control
+from x_tunnel.local import web_control
 # don't remove, launcher web_control need it.
 
 
@@ -56,6 +56,17 @@ def xxnet_version():
     return "get_version_fail"
 
 
+def get_launcher_uuid():
+    launcher_config_fn = os.path.join(data_path, "launcher", "config.json")
+    try:
+        with open(launcher_config_fn, "r") as fd:
+            info = json.load(fd)
+            return info["update_uuid"]
+    except Exception as e:
+        xlog.exception("get_launcher_uuid except:%r", e)
+        return ""
+
+
 def load_config():
     if len(sys.argv) > 2 and sys.argv[1] == "-f":
         config_path = sys.argv[2]
@@ -68,12 +79,14 @@ def load_config():
 
     config.set_var("log_level", "DEBUG")
     config.set_var("write_log_file", 0)
+    config.set_var("show_debug", 0)
 
     config.set_var("encrypt_data", 0)
     config.set_var("encrypt_password", "encrypt_pass")
     config.set_var("encrypt_method", "aes-256-cfb")
 
-    config.set_var("api_server", "center.xx-net.net")
+    config.set_var("api_server", "center.xx-net.org")
+    config.set_var("scan_servers", ["scan1"])
     config.set_var("server_host", "")
     config.set_var("server_port", 443)
     config.set_var("use_https", 1)
@@ -92,10 +105,10 @@ def load_config():
     config.set_var("concurent_thread_num", 50)
 
     # min roundtrip on road if connectoin exist
-    config.set_var("min_on_road", 1)
+    config.set_var("min_on_road", 3)
 
     # range 1 - 1000, ms
-    config.set_var("send_delay", 30)
+    config.set_var("send_delay", 10)
 
     # range 1 - 20000, ms
     config.set_var("resend_timeout", 5000)
@@ -104,7 +117,7 @@ def load_config():
     config.set_var("ack_delay", 300)
 
     # max 10M
-    config.set_var("max_payload", 128 * 1024)
+    config.set_var("max_payload", 3 * 128 * 1024)
 
     # range 1 - 30
     config.set_var("roundtrip_timeout", 25)
@@ -115,11 +128,12 @@ def load_config():
 
     # reporter
     config.set_var("timeout_threshold", 2)
+    config.set_var("report_interval", 60)
 
     config.set_var("enable_gae_proxy", 1)
     config.set_var("enable_cloudflare", 1)
-    config.set_var("enable_cloudfront", 1)
-    config.set_var("enable_heroku", 1)
+    config.set_var("enable_cloudfront", 0)
+    config.set_var("enable_heroku", 0)
     config.set_var("enable_tls_relay", 1)
     config.set_var("enable_direct", 0)
 
@@ -140,6 +154,7 @@ def main(args):
     global ready
 
     g.xxnet_version = xxnet_version()
+    g.client_uuid = get_launcher_uuid()
 
     load_config()
     front_dispatcher.init()
@@ -164,12 +179,18 @@ def main(args):
     g.session = proxy_session.ProxySession()
 
     allow_remote = args.get("allow_remote", 0)
-    if allow_remote:
-        listen_ip = "0.0.0.0"
-    else:
-        listen_ip = g.config.socks_host
 
-    g.socks5_server = simple_http_server.HTTPServer((listen_ip, g.config.socks_port), Socks5Server, logger=xlog)
+    listen_ips = g.config.socks_host
+    if isinstance(listen_ips, str):
+        listen_ips = [listen_ips]
+    else:
+        listen_ips = list(listen_ips)
+
+    if allow_remote and ("0.0.0.0" not in listen_ips or "::" not in listen_ips):
+        listen_ips = [("0.0.0.0"),]
+    addresses = [(listen_ip, g.config.socks_port) for listen_ip in listen_ips]
+
+    g.socks5_server = simple_http_server.HTTPServer(addresses, Socks5Server, logger=xlog)
     xlog.info("Socks5 server listen:%s:%d.", g.config.socks_host, g.config.socks_port)
 
     ready = True
@@ -180,6 +201,7 @@ def terminate():
     global ready
     g.running = False
     g.http_client.stop()
+    front_dispatcher.stop()
 
     if g.socks5_server:
         xlog.info("Close Socks5 server ")

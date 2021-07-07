@@ -4,8 +4,9 @@ import time
 import collections
 import operator
 
-import global_var as g
+from . import global_var as g
 
+import utils
 from xlog import getLogger
 xlog = getLogger("smart_router")
 
@@ -29,7 +30,7 @@ class DomainRecords(object):
     # ==============
     # "r": rule
     # "g": gae_acceptable
-    # "ip": { ip: cn, ..}
+    # "dns": { dns_type: [ip], ..}
     # "update": $ip_update_time
 
     def __init__(self, file_path, capacity=1000, ttl=3600):
@@ -45,10 +46,10 @@ class DomainRecords(object):
 
         self.running = True
 
-    def get(self, domain):
+    def _get(self, domain):
         with self.lock:
             try:
-                record = self.cache.pop(domain)
+                record = self.cache[domain]
 
                 time_now = time.time()
                 if time_now - record["update"] > self.ttl:
@@ -57,11 +58,11 @@ class DomainRecords(object):
                 record = None
 
             if not record:
-                record = {"r": "unknown", "ip": {}, "g": 1, "query_count": 0}
-            self.cache[domain] = record
+                record = {"r": "unknown", "dns": {}, "g": 1, "query_count": 0}
+            #self.cache[domain] = record
             return record
 
-    def set(self, domain, record):
+    def _set(self, domain, record):
         with self.lock:
             try:
                 self.cache.pop(domain)
@@ -69,6 +70,7 @@ class DomainRecords(object):
                 if len(self.cache) >= self.capacity:
                     self.cache.popitem(last=False)
 
+            record["update"] = time.time()
             self.cache[domain] = record
             self.need_save = True
             self.last_update_time = time.time()
@@ -124,15 +126,8 @@ class DomainRecords(object):
                             domain = lp[0]
                             rule = lp[1]
                             gae_acceptable = int(lp[2])
-                            ips = lp[3].split(",")
-                            update_time = int(lp[4])
-                            record = {"r": rule, "ip":{}, "update": update_time, "g":gae_acceptable}
-                            for ipd in ips:
-                                ipl = ipd.split("|")
-                                ip = ipl[0]
-                                cn = ipl[1]
 
-                                record["ip"][ip] = cn
+                            record = {"r": rule, "ip":{}, "g":gae_acceptable}
                         else:
                             xlog.warn("rule line:%s fail", line)
                             continue
@@ -153,101 +148,74 @@ class DomainRecords(object):
 
         with self.lock:
             with open(self.file_path, "w") as fd:
-                for host in self.cache:
-                    record = self.cache[host]
-                    line = host + " " + record["r"] + " " + str(record["g"]) + " "
-                    if len(record["ip"]) and time_now - record["update"] < self.ttl:
-                        for ip in record["ip"]:
-                            cn = record["ip"][ip]
-                            line += ip + "|" + cn + ","
-
-                        line = line[:-1]
-                        line += " " + str(int(record["update"]))
+                for host, record in self.cache.items():
+                    line = utils.to_str(host) + " " + record["r"] + " " + str(record["g"]) + " "
 
                     fd.write(line + "\n")
 
         self.last_save_time = time.time()
         self.need_save = False
 
-    def get_ips(self, domain, type=None):
-        record = self.get(domain)
-        if len(record["ip"]) == 0:
+    def set_ips(self, domain, ips, dns_type):
+        if not ips:
+            return ips
+
+        record = self._get(domain)
+
+        if dns_type not in record["dns"]:
+            record["dns"][dns_type] = ips
+        else:
+            for ip in ips:
+                if ip in record["dns"][dns_type]:
+                    continue
+                record["dns"][dns_type].append(ip)
+
+        self._set(domain, record)
+
+    def get_ips(self, domain, dns_type=None):
+        if domain not in self.cache:
             return []
 
-        ips = []
-        for ip in record["ip"]:
-            if type and ("." in ip and type != 1) or (":" in ip and type != 28):
-                continue
+        record = self._get(domain)
+        if not dns_type:
+            dns_types = [1, 28]
+        else:
+            dns_types = [dns_type]
 
-            cn = record["ip"][ip]
-            s = "%s|%s" % (ip, cn)
-            ips.append(s)
+        ips = []
+        for dns_type in dns_types:
+            if dns_type not in record["dns"]:
+                continue
+            ips += record["dns"][dns_type]
 
         return ips
 
-    def get_ordered_ips(self, domain, type=None):
-        record = self.get(domain)
-        if len(record["ip"]) == 0:
-            return []
-
-        ip_rate = {}
-        for ip in record["ip"]:
-            connect_time = g.ip_cache.get_connect_time(ip)
-            if not connect_time:
-                ip_rate[ip] = 9999
-            else:
-                ip_rate[ip] = connect_time
-
-        if not ip_rate:
-            return []
-
-        ip_time = sorted(ip_rate.items(), key=operator.itemgetter(1))
-
-        ordered_ips = []
-        for ip, rate in ip_time:
-            cn = record["ip"][ip]
-            s = "%s|%s" % (ip, cn)
-            ordered_ips.append(s)
-
-        return ordered_ips
-
-    def set_ips(self, domain, ips, type=None, rule="direct"):
-        record = self.get(domain)
-        if rule != "direct":
-            record["r"] = rule
-
-        for ipd in ips:
-            ipl = ipd.split("|")
-            ip = ipl[0]
-            cn = ipl[1]
-            record["ip"][ip] = cn
-
-        record["update"] = time.time()
-
-        self.set(domain, record)
-
-    def update_rule(self, domain, port, rule):
-        record = self.get(domain)
+    def update_rule(self, domain, rule):
+        record = self._get(domain)
         record["r"] = rule
-        return self.set(domain, record)
+        return self._set(domain, record)
+
+    def get_rule(self, domain):
+        record = self._get(domain)
+        return record["r"]
 
     def report_gae_deny(self, domain, port=None):
-        record = self.get(domain)
+        record = self._get(domain)
         record["g"] = 0
-        return self.set(domain, record)
+        return self._set(domain, record)
 
     def accept_gae(self, domain, port=None):
-        record = self.get(domain)
+        record = self._get(domain)
         return record["g"]
 
     def get_query_count(self, domain):
-        record = self.get(domain)
+        record = self._get(domain)
         return record["query_count"]
 
     def add_query_count(self, domain):
-        record = self.get(domain)
+        record = self._get(domain)
         record["query_count"] += 1
-        self.set(domain, record)
+        self._set(domain, record)
 
 
 class IpRecord(object):
@@ -357,7 +325,7 @@ class IpRecord(object):
     def get_connect_time(self, ip, port=None):
         record = self.get(ip)
         if not record or time.time() - record["update"] > self.ttl:
-            if "." in ip:
+            if b"." in ip:
                 return 6000
             else:
                 return 4000
@@ -366,7 +334,7 @@ class IpRecord(object):
 
     def update_rule(self, ip, port, rule):
         record = self.get(ip)
-        if "." in ip:
+        if b"." in ip:
             connect_time = 6000
         else:
             connect_time = 4000

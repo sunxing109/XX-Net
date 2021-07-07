@@ -54,6 +54,9 @@ sc start iphlpsvc
 :: Reset IPv6
 netsh interface ipv6 reset
 
+:: Reset Group Policy Teredo
+..\..\..\..\..\python3.8.2\python.exe win_reset_gp.py
+
 netsh interface teredo set state type=enterpriseclient servername=teredo.remlab.net.
 
 :: Keep teredo interface route (not needed with reset?)
@@ -61,15 +64,20 @@ netsh interface teredo set state type=enterpriseclient servername=teredo.remlab.
 :: netsh interface ipv6 add route ::/0 "Teredo Tunneling Pseudo-Interface"
 
 :: Set IPv6 prefixpolicies
-:: 2001::/16 Aggregate global unicast address; not default
+:: See https://tools.ietf.org/html/rfc3484
 :: 2002::/16 6to4 tunnel
-:: 2001::/32 teredo tunnel
+:: 2001::/32 teredo tunnel; not default
+netsh interface ipv6 add prefixpolicy ::1/128 50 0
 netsh interface ipv6 set prefixpolicy ::1/128 50 0
+netsh interface ipv6 add prefixpolicy ::/0 40 1
 netsh interface ipv6 set prefixpolicy ::/0 40 1
-netsh interface ipv6 add prefixpolicy 2001::/16 35 6
+netsh interface ipv6 add prefixpolicy 2002::/16 30 2
 netsh interface ipv6 set prefixpolicy 2002::/16 30 2
+netsh interface ipv6 add prefixpolicy 2001::/32 25 5
 netsh interface ipv6 set prefixpolicy 2001::/32 25 5
+netsh interface ipv6 add prefixpolicy ::/96 20 3
 netsh interface ipv6 set prefixpolicy ::/96 20 3
+netsh interface ipv6 add prefixpolicy ::ffff:0:0/96 10 4
 netsh interface ipv6 set prefixpolicy ::ffff:0:0/96 10 4
 
 :: Fix look up AAAA on teredo
@@ -79,10 +87,6 @@ Reg add HKLM\SYSTEM\CurrentControlSet\services\Dnscache\Parameters /v AddrConfig
 
 :: Enable all IPv6 parts
 Reg add HKLM\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters /v DisabledComponents /t REG_DWORD /d 0 /f
-
-:: Set Group Policy
-:: HKLM\Software\Policies\Microsoft\Windows\TCPIP\v6Transition -Name Teredo_DefaultQualified 
-:: HKLM\Software\Policies\Microsoft\Windows\TCPIP\v6Transition -Name Teredo_State 
 
 
 ipconfig /flushdns

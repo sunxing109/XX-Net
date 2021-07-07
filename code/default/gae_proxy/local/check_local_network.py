@@ -8,10 +8,12 @@ import threading
 current_path = os.path.dirname(os.path.abspath(__file__))
 
 if __name__ == "__main__":
-    python_path = os.path.abspath( os.path.join(current_path, os.pardir, os.pardir, 'python27', '1.0'))
+    python_path = os.path.abspath( os.path.join(current_path, os.pardir, os.pardir))
+    root_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir))
 
     noarch_lib = os.path.abspath( os.path.join(python_path, 'lib', 'noarch'))
     sys.path.append(noarch_lib)
+    sys.path.append(root_path)
 
     if sys.platform == "win32":
         win32_lib = os.path.abspath( os.path.join(python_path, 'lib', 'win32'))
@@ -21,11 +23,7 @@ if __name__ == "__main__":
         sys.path.append(linux_lib)
 
 
-#try:
-#    from code.default.gae_proxy.local.config import config
-#except:
-#    from code.default.gae_proxy.local.config import config
-from config import config
+from gae_proxy.local.config import config
 
 import simple_http_client
 from xlog import getLogger
@@ -75,10 +73,22 @@ class CheckNetwork(object):
             self.triger_check_network(True)
 
     def get_stat(self):
-        return self.network_stat
+        if config.check_local_network_rules == "force_fail":
+            return "Fail"
+        elif config.check_local_network_rules == "force_ok":
+            return "OK"
+        else:
+            return self.network_stat
 
     def is_ok(self):
-        return self.network_stat == "OK"
+        if config.check_local_network_rules == "normal":
+            return self.network_stat == "OK"
+        elif config.check_local_network_rules == "force_fail":
+            return False
+        elif config.check_local_network_rules == "force_ok":
+            return True
+        else:
+            return self.network_stat == "OK"
 
     def _test_host(self, url):
         try:
@@ -156,10 +166,10 @@ IPv4.urls = [
 IPv4.triger_check_network()
 
 IPv6 = CheckNetwork("IPv6")
-IPv6.urls = ["http://[2001:41d0:8:e8ad::1]",
-             "http://[2001:260:401:372::5f]",
-             "http://[2a02:188:3e00::32]",
-             "http://[2804:10:4068::202:82]"
+IPv6.urls = ["https://ipv6.vm3.test-ipv6.com",
+             "http://[2001:470:1:18::115]",
+             "http://ipv6.lookup.test-ipv6.com",
+             "http://v6.myip.la"
              ]
 IPv6.triger_check_network()
 
@@ -188,4 +198,5 @@ def is_ok(ip=None):
 
 
 if __name__ == "__main__":
-    print IPv6._test_host("http://[2804:10:4068::202:82]")
+    #print(IPv6._test_host("http://[2804:10:4068::202:82]"))
+    IPv4._test_host("https://www.baidu.com")

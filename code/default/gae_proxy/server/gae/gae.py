@@ -17,7 +17,7 @@
 # Then GAE_proxy local client will switch to range fetch mode.
 
 
-__version__ = '3.3.3'
+__version__ = '3.3.5'
 __password__ = ''
 __hostsdeny__ = ()
 #__hostsdeny__ = ('.youtube.com', '.youku.com', ".googlevideo.com")
@@ -124,7 +124,7 @@ def format_response(status, headers, content):
         headers['Content-Length'] = str(len(content))
     data = 'HTTP/1.1 %d %s\r\n%s\r\n\r\n%s' % \
             (status,
-             httplib.responses.get(status,'Unknown'),
+             httplib.responses.get(status, 'Unknown'),
              '\r\n'.join('%s: %s' % (k.title(), v) for k, v in headers.items()),
              content)
     data = deflate(data)
@@ -132,7 +132,7 @@ def format_response(status, headers, content):
 
 
 def is_text_content_type(content_type):
-    mct, sct = content_type.split('/', 1)
+    mct, _, sct = content_type.partition('/')
     if mct == 'text':
         return True
     if mct == 'application':
@@ -145,15 +145,18 @@ def is_text_content_type(content_type):
 
 
 def is_deflate(data):
-    CMF, FLG = bytearray(data[:2])
-    if CMF & 0x0F == 8 and CMF & 0x80 == 0 and ((CMF << 8) + FLG) % 31 == 0:
-        return True
-    try:
-        decompressor = zlib.decompressobj(-zlib.MAX_WBITS)
-        decompressor.decompress(data[:1024])
-        return decompressor.unused_data == ''
-    except:
-        return False
+    if len(data) > 1:
+        CMF, FLG = bytearray(data[:2])
+        if CMF & 0x0F == 8 and CMF & 0x80 == 0 and ((CMF << 8) + FLG) % 31 == 0:
+            return True
+    if len(data) > 0:
+        try:
+            decompressor = zlib.decompressobj(-zlib.MAX_WBITS)
+            decompressor.decompress(data[:1024])
+            return decompressor.unused_data == ''
+        except:
+            return False
+    return False
 
 
 def application(environ, start_response):
@@ -349,7 +352,6 @@ def application(environ, start_response):
                 url,
                 response)
 
-            allow_truncated = True
             m = re.search(r'=\s*(\d+)-', headers.get('Range')
                           or headers.get('range') or '')
             if m is None:
@@ -402,7 +404,7 @@ def application(environ, start_response):
             maxsize - 1, len(data))
         data = data[:maxsize]
     if 'gzip' in accept_encoding:
-        if (status_code == 200 and
+        if (data and status_code == 200 and
                 content_encoding == '' and
                 is_text_content_type(content_type) and
                 is_deflate(data)):

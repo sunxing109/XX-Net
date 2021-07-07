@@ -12,11 +12,13 @@ xlog = getLogger("x_tunnel")
 
 class WriteBuffer(object):
     def __init__(self, s=None):
-        if isinstance(s, str):
+        if isinstance(s, bytes):
             self.string_len = len(s)
             self.buffer_list = [s]
-        else:
+        elif s is None:
             self.reset()
+        else:
+            raise Exception("WriteBuffer init not bytes or StringBuffer")
 
     def reset(self):
         self.buffer_list = []
@@ -33,7 +35,7 @@ class WriteBuffer(object):
         if isinstance(s, WriteBuffer):
             self.buffer_list = s.buffer_list + self.buffer_list
             self.string_len += s.string_len
-        elif isinstance(s, str):
+        elif isinstance(s, bytes):
             self.buffer_list.insert(0, s)
             self.string_len += len(s)
         else:
@@ -43,17 +45,20 @@ class WriteBuffer(object):
         if isinstance(s, WriteBuffer):
             self.buffer_list.extend(s.buffer_list)
             self.string_len += s.string_len
-        elif isinstance(s, str):
+        elif isinstance(s, bytes):
             self.buffer_list.append(s)
             self.string_len += len(s)
         else:
-            raise Exception("WriteBuffer append not string or StringBuffer")
+            raise Exception("WriteBuffer append not bytes or StringBuffer")
+
+    def to_bytes(self):
+        return b"".join(self.buffer_list)
+
+    def __bytes__(self):
+        return self.to_bytes()
 
     def __str__(self):
-        return self.get_string()
-
-    def get_string(self):
-        return "".join(self.buffer_list)
+        return self.to_bytes().decode("ascii")
 
 
 class ReadBuffer(object):
@@ -95,6 +100,12 @@ class ReadBuffer(object):
         self.begin += size
         self.size -= size
         return buf
+
+    def __bytes__(self):
+        return bytes(self.buf[self.begin:self.begin+self.size])
+
+    def __str__(self):
+        return (bytes(self.buf[self.begin:self.begin+self.size])).decode("ascii")
 
 
 class AckPool():
@@ -188,7 +199,7 @@ class WaitQueue():
         out_string = "waiters[%d]:<br>\n" % len(self.waiters)
         for i in range(0, len(self.waiters)):
             end_time, lock = self.waiters[i]
-            out_string += "%d<br>\r\n" % ((end_time - time.time()))
+            out_string += "%d<br>\r\n" % (end_time)
 
         return out_string
 
@@ -200,6 +211,7 @@ class SendBuffer():
         self.reset()
 
     def reset(self):
+        xlog.debug("SendBuffer reset")
         self.pool_size = 0
         self.last_put_time = time.time()
         with self.mutex:
@@ -210,9 +222,10 @@ class SendBuffer():
 
     def put(self, data):
         dlen = len(data)
+        # xlog.debug("SendBuffer len:%d", dlen)
         if dlen == 0:
             xlog.warn("SendBuffer put 0")
-            return
+            return False
 
         # xlog.debug("SendBuffer put len:%d", len(data))
         self.last_put_time = time.time()
@@ -224,7 +237,7 @@ class SendBuffer():
                 self.block_list[self.head_sn] = self.last_block
                 self.last_block = WriteBuffer()
                 self.head_sn += 1
-                return True
+        return True
 
     def get(self):
         with self.mutex:
@@ -260,7 +273,7 @@ class SendBuffer():
         out_string += " head_sn:%d<br>\n" % self.head_sn
         out_string += " tail_sn:%d<br>\n" % self.tail_sn
         out_string += "block_list:[%d]<br>\n" % len(self.block_list)
-        for sn in sorted(self.block_list.iterkeys()):
+        for sn in sorted(self.block_list.keys()):
             data = self.block_list[sn]
             out_string += "[%d] len:%d<br>\r\n" % (sn, len(data))
 
@@ -285,7 +298,7 @@ class BlockReceivePool():
                 # xlog.warn("recv_pool put timeout sn:%d", sn)
                 return False
             elif sn > self.next_sn:
-                # xlog.debug("recv_pool put unorder sn:%d", sn)
+                # xlog.debug("recv_pool put disorder sn:%d", sn)
                 if sn in self.block_list:
                     # xlog.warn("recv_pool put sn:%d exist", sn)
                     return False
@@ -320,7 +333,7 @@ class BlockReceivePool():
 
 class Conn(object):
     def __init__(self, session, conn_id, sock, host, port, windows_size, windows_ack, is_client, xlog):
-        # xlog.info("session:%s Conn:%d host:%s port:%d", session.session_id, conn_id, host, port)
+        # xlog.info("session:%s conn:%d host:%s port:%d", session.session_id, conn_id, host, port)
         self.host = host
         self.port = port
         self.session = session
@@ -381,11 +394,10 @@ class Conn(object):
         return out_string
 
     def stop(self, reason=""):
-        self.stop_thread = threading.Thread(target=self.do_stop, args=(reason,))
-        self.stop_thread.start()
+        threading.Thread(target=self.do_stop, args=(reason,)).start()
 
     def do_stop(self, reason="unknown"):
-        self.xlog.debug("Conn session:%s conn:%d stop:%s", self.session.session_id, self.conn_id, reason)
+        self.xlog.debug("Conn session:%s conn:%d stop:%s", utils.to_str(self.session.session_id), self.conn_id, reason)
         self.running = False
 
         self.cmd_notice.acquire()
@@ -409,14 +421,14 @@ class Conn(object):
             self.sock.close()
             self.sock = None
 
-        # xlog.debug("Conn session:%s conn:%d stopped", self.session.session_id, self.conn_id)
+        # self.xlog.debug("Conn session:%s conn:%d stopped", self.session.session_id, self.conn_id)
         self.session.remove_conn(self.conn_id)
 
     def do_connect(self, host, port):
-        self.xlog.info("session_id:%s create_conn %d %s:%d", self.session.session_id, self.conn_id, host, port)
+        # self.xlog.info("session_id:%s create_conn conn:%d %s:%d", self.session.session_id, self.conn_id, host, port)
         connect_timeout = 30
         sock = None
-        # start_time = time.time()
+        start_time = time.time()
         ip = ""
         try:
             if ':' in host:
@@ -426,14 +438,14 @@ class Conn(object):
                 # IPV4
                 ip = host
             else:
-                # xlog.debug("getting ip of %s", host)
+                # self.xlog.debug("getting ip of %s", host)
                 ip = socket.gethostbyname(host)
-                # xlog.debug("resolve %s to %s", host, ip)
+                # self.xlog.debug("resolve %s to %s", host, ip)
             sock = socket.socket(socket.AF_INET if ':' not in ip else socket.AF_INET6)
             # set reuseaddr option to avoid 10048 socket error
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            # resize socket recv buffer 8K->32K to improve browser releated application performance
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 32 * 1024)
+            # resize socket recv buffer ->256K to improve browser releated application performance
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)
             # disable negal algorithm to send http request quickly.
             sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, True)
             # set a short timeout to trigger timeout retry more quickly.
@@ -443,12 +455,12 @@ class Conn(object):
 
             # record TCP connection time
             # conn_time = time.time() - start_time
-            # xlog.debug("tcp conn %s %s time:%d", host, ip, conn_time * 1000)
+            # self.xlog.debug("tcp conn %s %s time:%d", host, ip, conn_time * 1000)
 
             return sock, True
         except Exception as e:
-            # conn_time = int((time.time() - start_time) * 1000)
-            # xlog.debug("tcp conn host:%s %s:%d fail t:%d %r", host, ip, port, conn_time, e)
+            conn_time = int((time.time() - start_time) * 1000)
+            self.xlog.debug("tcp conn host:%s %s:%d fail t:%d %r", host, ip, port, conn_time, e)
             if sock:
                 sock.close()
             return e, False
@@ -457,11 +469,12 @@ class Conn(object):
         with self.cmd_notice:
             seq = struct.unpack("<I", data.get(4))[0]
             if seq < self.next_cmd_seq:
-                # xlog.warn("put_send_data %s conn:%d seq:%d next:%d",
-                #               self.session.session_id, self.conn_id,
-                #               seq, self.next_cmd_seq)
+                self.xlog.warn("put_send_data %s conn:%d seq:%d next:%d",
+                               self.session.session_id, self.conn_id,
+                               seq, self.next_cmd_seq)
                 return
 
+            # xlog.debug("conn:%d put data seq:%d len:%d", self.conn_id, seq, len(data))
             self.cmd_queue[seq] = data.get_buf()
 
             if seq == self.next_cmd_seq:
@@ -474,8 +487,9 @@ class Conn(object):
                 if self.next_cmd_seq in self.cmd_queue:
                     payload = self.cmd_queue[self.next_cmd_seq]
                     del self.cmd_queue[self.next_cmd_seq]
+                    # self.xlog.debug("Conn session:%s conn:%d get data sn:%d len:%d ",
+                    #                self.session.session_id, self.conn_id, self.next_cmd_seq, len(payload))
                     self.next_cmd_seq += 1
-                    #self.xlog.debug("Conn session:%s conn:%d get data len:%d ", self.session.session_id, self.conn_id, len(payload))
                     return payload
                 else:
                     self.cmd_notice.wait()
@@ -495,7 +509,7 @@ class Conn(object):
 
             elif cmd_id == 3:  # ack:
                 position = struct.unpack("<Q", data.get(8))[0]
-                self.xlog.debug("Conn session:%s conn:%d ACK:%d", self.session.session_id, self.conn_id, position)
+                # self.xlog.debug("Conn session:%s conn:%d ACK:%d", self.session.session_id, self.conn_id, position)
                 if position > self.remote_acked_position:
                     self.remote_acked_position = position
                     self.recv_notice.acquire()
@@ -539,6 +553,7 @@ class Conn(object):
                 raise Exception("put_send_data unknown cmd_id:%d" % cmd_id)
 
     def send_to_sock(self, data):
+        # self.xlog.debug("Conn send_to_sock conn:%d len:%d", self.conn_id, len(data))
         sock = self.sock
         if not sock:
             return
@@ -552,7 +567,7 @@ class Conn(object):
             try:
                 sended = sock.send(buf[start:start + send_size])
             except Exception as e:
-                self.xlog.info("%s conn_id:%d send closed", self.session.session_id, self.conn_id)
+                self.xlog.info("%s conn:%d send closed", self.session.session_id, self.conn_id)
                 sock.close()
                 self.sock = None
                 if self.is_client:
@@ -565,7 +580,7 @@ class Conn(object):
         if self.sended_position - self.sended_window_position > self.windows_ack:
             self.sended_window_position = self.sended_position
             self.transfer_ack(self.sended_position)
-            # xlog.debug("Conn:%d ack:%d", self.conn_id, self.sended_window_position)
+            # self.xlog.debug("Conn:%d ack:%d", self.conn_id, self.sended_window_position)
 
     def transfer_peer_close(self, reason=""):
         with self.recv_notice:
@@ -574,12 +589,13 @@ class Conn(object):
             self.transfered_close_to_peer = True
 
             cmd = struct.pack("<IB", self.next_recv_seq, 2)
+            if isinstance(reason, str):
+                reason = reason.encode("utf-8")
             self.session.send_conn_data(self.conn_id, cmd + reason)
             self.next_recv_seq += 1
 
     def transfer_received_data(self, data):
         with self.recv_notice:
-
             if self.transfered_close_to_peer:
                 return
 
@@ -588,12 +604,7 @@ class Conn(object):
             self.next_recv_seq += 1
             self.received_position += len(data)
 
-            if self.received_position < 16 * 1024:
-                no_delay = True
-            else:
-                no_delay = False
-
-            self.session.send_conn_data(self.conn_id, buf, no_delay)
+            self.session.send_conn_data(self.conn_id, buf)
 
     def transfer_ack(self, position):
         with self.recv_notice:
@@ -612,7 +623,7 @@ class Conn(object):
             self.recv_notice.acquire()
             try:
                 if self.received_position > self.remote_acked_position + self.windows_size:
-                    # xlog.debug("Conn session:%s conn:%d recv blocked, rcv:%d, ack:%d", self.session.session_id, self.conn_id, self.received_position, self.remote_acked_position)
+                    self.xlog.debug("Conn session:%s conn:%d recv blocked, rcv:%d, ack:%d", self.session.session_id, self.conn_id, self.received_position, self.remote_acked_position)
                     self.recv_notice.wait()
                     continue
             finally:
@@ -627,7 +638,7 @@ class Conn(object):
 
                 data_len = len(data)
                 if data_len == 0:
-                    # xlog.debug("Conn session:%s conn:%d recv socket closed", self.session.session_id, self.conn_id)
+                    self.xlog.debug("Conn session:%s conn:%d recv socket closed", self.session.session_id, self.conn_id)
                     self.transfer_peer_close("recv closed")
 
                     sock.close()
@@ -640,6 +651,7 @@ class Conn(object):
                     return
 
                 self.transfer_received_data(data)
-                # xlog.debug("Conn session:%s conn:%d Recv len:%d id:%d", self.session.session_id, self.conn_id, data_len, self.recv_id)
+                # self.xlog.debug("Conn session:%s conn:%d Recv len:%d rcv_pos:%d",
+                #           self.session.session_id, self.conn_id, data_len, self.received_position)
 
-                # xlog.debug("Conn session:%s conn:%d Recv worker stopped", self.session.session_id, self.conn_id)
+                # self.xlog.debug("Conn session:%s conn:%d Recv worker stopped", self.session.session_id, self.conn_id)

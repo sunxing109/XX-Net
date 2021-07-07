@@ -1,13 +1,12 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # coding:utf-8
 
-import atexit
 import os
 import sys
 import time
-import platform
-import shutil
+import traceback
 from datetime import datetime
+import atexit
 
 # reduce resource request for threading
 # for OpenWrt
@@ -23,18 +22,14 @@ try:
 except:
     pass
 
-try:
-    raw_input          # python 2
-except NameError:
-    raw_input = input  # python 3
-
 current_path = os.path.dirname(os.path.abspath(__file__))
-root_path = os.path.abspath(os.path.join(current_path, os.pardir))
-data_path = os.path.abspath(os.path.join(root_path, os.pardir, os.pardir, 'data'))
+default_path = os.path.abspath(os.path.join(current_path, os.pardir))
+data_path = os.path.abspath(os.path.join(default_path, os.pardir, os.pardir, 'data'))
 data_launcher_path = os.path.join(data_path, 'launcher')
-python_path = os.path.join(root_path, 'python27', '1.0')
-noarch_lib = os.path.abspath(os.path.join(python_path, 'lib', 'noarch'))
+noarch_lib = os.path.abspath(os.path.join(default_path, 'lib', 'noarch'))
 sys.path.append(noarch_lib)
+
+running_file = os.path.join(data_launcher_path, "Running.Lck")
 
 
 def create_data_path():
@@ -56,18 +51,19 @@ log_file = os.path.join(data_launcher_path, "launcher.log")
 xlog = getLogger("launcher", file_name=log_file)
 
 
-def uncaughtExceptionHandler(type_, value, traceback):
-    if type == KeyboardInterrupt:  # Ctrl + C on console
+def uncaughtExceptionHandler(etype, value, tb):
+    if etype == KeyboardInterrupt:  # Ctrl + C on console
         xlog.warn("KeyboardInterrupt, exiting...")
         module_init.stop_all()
         os._exit(0)
 
-    print("uncaught Exception:", type_, value, traceback)
+    exc_info = ''.join(traceback.format_exception(etype, value, tb))
+    print(("uncaught Exception:\n" + exc_info))
     with open(os.path.join(data_launcher_path, "error.log"), "a") as fd:
         now = datetime.now()
         time_str = now.strftime("%b %d %H:%M:%S.%f")[:19]
-        fd.write("%s type:%s value=%s traceback:%s" % (time_str, type_, value, traceback))
-    xlog.error("uncaught Exception, type=%s value=%s traceback:%s", type_, value, traceback)
+        fd.write("%s type:%s value=%s traceback:%s" % (time_str, etype, value, exc_info))
+    xlog.error("uncaught Exception, type=%s value=%s traceback:%s", etype, value, exc_info)
     # sys.exit(1)
 
 
@@ -75,74 +71,6 @@ sys.excepthook = uncaughtExceptionHandler
 
 
 has_desktop = True
-
-if "arm" in platform.machine() or "mips" in platform.machine() or "aarch64" in platform.machine():
-    xlog.info("This is Android or IOS or router.")
-    has_desktop = False
-
-    # check remove linux lib
-    shutil.rmtree(os.path.join(noarch_lib, "OpenSSL"), ignore_errors=True)
-
-    linux_lib = os.path.join(python_path, 'lib', 'linux')
-    shutil.rmtree(linux_lib, ignore_errors=True)
-    from non_tray import sys_tray
-
-    platform_lib = ""
-elif sys.platform.startswith("linux"):
-    def X_is_running():
-        try:
-            from subprocess import Popen, PIPE
-            p = Popen(["xset", "-q"], stdout=PIPE, stderr=PIPE)
-            p.communicate()
-            return p.returncode == 0
-        except:
-            return False
-
-    def has_gi():
-        try:
-            import gi
-            gi.require_version('Gtk', '3.0')
-            from gi.repository import Gtk as gtk
-            return True
-        except:
-            return False
-
-    def has_pygtk():
-        try:
-            import pygtk
-            pygtk.require('2.0')
-            import gtk
-            return True
-        except:
-            return False
-
-    if X_is_running() and (has_pygtk() or has_gi()):
-        from gtk_tray import sys_tray
-    else:
-        from non_tray import sys_tray
-        has_desktop = False
-
-    platform_lib = os.path.join(python_path, 'lib', 'linux')
-    sys.path.append(platform_lib)
-elif sys.platform == "win32":
-    platform_lib = os.path.join(python_path, 'lib', 'win32')
-    sys.path.append(platform_lib)
-    from win_tray import sys_tray
-elif sys.platform == "darwin":
-    platform_lib = os.path.abspath(os.path.join(python_path, 'lib', 'darwin'))
-    sys.path.append(platform_lib)
-    extra_lib = "/System/Library/Frameworks/Python.framework/Versions/2.7/Extras/lib/python/PyObjc"
-    sys.path.append(extra_lib)
-
-    try:
-        import mac_tray as sys_tray
-    except:
-        from non_tray import sys_tray
-else:
-    print("detect platform fail:%s" % sys.platform)
-    from non_tray import sys_tray
-    has_desktop = False
-    platform_lib = ""
 
 
 def unload(module):
@@ -176,16 +104,16 @@ except Exception as e1:
     except Exception as e2:
         xlog.exception("import system python-OpenSSL fail:%r", e2)
         print("Try install python-openssl\r\n")
-        raw_input("Press Enter to continue...")
+        input("Press Enter to continue...")
         os._exit(0)
 
-
-import config
+import sys_platform
+from config import config
 import web_control
 import module_init
 import update
-import setup_win_python
 import update_from_github
+import download_modules
 
 
 def exit_handler():
@@ -204,39 +132,57 @@ def main():
         __file__ = getattr(os, 'readlink', lambda x: x)(__file__)
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
+    if sys.platform == "win32" and config.show_compat_suggest:
+        import win_compat_suggest
+        win_compat_suggest.main()
+
     current_version = update_from_github.current_version()
 
     xlog.info("start XX-Net %s", current_version)
 
     web_control.confirm_xxnet_not_running()
 
-    setup_win_python.check_setup()
-
     import post_update
     post_update.check()
 
     allow_remote = 0
+    no_mess_system = 0
     if len(sys.argv) > 1:
         for s in sys.argv[1:]:
             xlog.info("command args:%s", s)
             if s == "-allow_remote":
                 allow_remote = 1
-                module_init.xargs["allow_remote"] = 1
+            elif s == "-no_mess_system":
+                no_mess_system = 1
+
+    if allow_remote or config.allow_remote_connect:
+        xlog.info("start with allow remote connect.")
+        module_init.xargs["allow_remote"] = 1
+
+    if os.getenv("XXNET_NO_MESS_SYSTEM", "0") != "0" or no_mess_system or config.no_mess_system:
+        xlog.info("start with no_mess_system, no CA will be imported to system.")
+        module_init.xargs["no_mess_system"] = 1
+
+    if os.path.isfile(running_file):
+        restart_from_except = True
+    else:
+        restart_from_except = False
 
     module_init.start_all_auto()
     web_control.start(allow_remote)
 
-    if has_desktop and config.get(["modules", "launcher", "popup_webui"], 1) == 1:
-        host_port = config.get(["modules", "launcher", "control_port"], 8085)
+    if has_desktop and config.popup_webui == 1 and not restart_from_except:
+        host_port = config.control_port
         import webbrowser
         webbrowser.open("http://localhost:%s/" % host_port)
 
     update.start()
-
+    if has_desktop:
+        download_modules.start_download()
     update_from_github.cleanup()
 
-    if config.get(["modules", "launcher", "show_systray"], 1):
-        sys_tray.serve_forever()
+    if config.show_systray:
+        sys_platform.sys_tray.serve_forever()
     else:
         while True:
             time.sleep(1)
@@ -251,4 +197,4 @@ if __name__ == '__main__':
         sys.exit()
     except Exception as e:
         xlog.exception("launcher except:%r", e)
-        raw_input("Press Enter to continue...")
+        input("Press Enter to continue...")

@@ -1,16 +1,15 @@
 
 ## 下载(Download)：
-稳定版(Stable)：  
-https://codeload.github.com/XX-net/XX-Net/zip/3.11.15
+稳定版(Stable version 4.5.2)：  
+[Windows 版下载](https://github.com/XX-net/XX-Net/releases/download/4.5.2/XX-Net-windows-4.5.2.7z)   
+[Mac/Linux 版下载](https://github.com/XX-net/XX-Net/archive/4.5.2.zip)  
 
 
-测试版(Test)：  
-https://codeload.github.com/XX-net/XX-Net/zip/3.12.0
+测试版(Test version 4.5.3)：  
+[Windows 版下载](https://github.com/XX-net/XX-Net/releases/download/4.5.3/XX-Net-windows-4.5.3.7z)   
+[Mac/Linux 版下载](https://github.com/XX-net/XX-Net/archive/4.5.3.zip)  
 
 
 Android:  
-集成fqrouter和XX-Net，推荐：  
+Xndroid, 集成fqrouter和XX-Net,目前只支持XX-Net 3.x.x：
 https://github.com/XndroidDev/Xndroid/releases
-
-单纯XX-Net，不能自动设置代理：    
-https://github.com/XX-net/xxnet-android/releases/download/3.6.3/XX-Net-3.6.3-debug.apk

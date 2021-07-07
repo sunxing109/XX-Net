@@ -1,24 +1,21 @@
 #!/usr/bin/env python
 # coding:utf-8
 
-import urlparse
+import urllib.parse
 import os
 import cgi
 import time
 import hashlib
-
-from xlog import getLogger
 import threading
+
+import utils
+from xlog import getLogger
 xlog = getLogger("x_tunnel")
 
 import simple_http_server
-import global_var as g
-import proxy_session
-from cloudflare_front import web_control as cloudflare_web
-from cloudfront_front import web_control as cloudfront_web
-from tls_relay_front import web_control as tls_relay_web
-from heroku_front import web_control as heroku_web
-from front_dispatcher import all_fronts
+from . import global_var as g
+from . import proxy_session
+from .tls_relay_front import web_control as tls_relay_web
 
 current_path = os.path.dirname(os.path.abspath(__file__))
 root_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir))
@@ -35,7 +32,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.wfile = wfile
 
     def do_GET(self):
-        path = urlparse.urlparse(self.path).path
+        path = urllib.parse.urlparse(self.path).path
         if path == "/log":
             return self.req_log_handler()
         elif path == "/debug":
@@ -51,13 +48,18 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             return self.req_status()
         elif path.startswith("/cloudflare_front/"):
             path = self.path[17:]
+            from .cloudflare_front import web_control as cloudflare_web
             controler = cloudflare_web.ControlHandler(self.client_address,
                              self.headers,
                              self.command, path,
                              self.rfile, self.wfile)
             controler.do_GET()
         elif path.startswith("/cloudfront_front/"):
+            if not g.config.enable_cloudfront:
+                return self.send_not_found()
+
             path = self.path[17:]
+            from .cloudfront_front import web_control as cloudfront_web
             controler = cloudfront_web.ControlHandler(self.client_address,
                              self.headers,
                              self.command, path,
@@ -65,6 +67,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             controler.do_GET()
         elif path.startswith("/heroku_front/"):
             path = self.path[13:]
+            from .heroku_front import web_control as heroku_web
             controler = heroku_web.ControlHandler(self.client_address,
                              self.headers,
                              self.command, path,
@@ -82,19 +85,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
 
     def do_POST(self):
         xlog.debug('x-tunnel web_control %s %s %s ', self.address_string(), self.command, self.path)
-        try:
-            ctype, pdict = cgi.parse_header(self.headers.getheader('content-type'))
-            if ctype == 'multipart/form-data':
-                self.postvars = cgi.parse_multipart(self.rfile, pdict)
-            elif ctype == 'application/x-www-form-urlencoded':
-                length = int(self.headers.getheader('content-length'))
-                self.postvars = urlparse.parse_qs(self.rfile.read(length), keep_blank_values=1)
-            else:
-                self.postvars = {}
-        except:
-            self.postvars = {}
 
-        path = urlparse.urlparse(self.path).path
+        path = urllib.parse.urlparse(self.path).path
         if path == '/login':
             return self.req_login_handler()
         elif path == "/logout":
@@ -109,6 +101,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             return self.req_transfer_handler()
         elif path.startswith("/cloudflare_front/"):
             path = path[17:]
+            from .cloudflare_front import web_control as cloudflare_web
             controler = cloudflare_web.ControlHandler(self.client_address,
                                                       self.headers,
                                                       self.command, path,
@@ -116,6 +109,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             controler.do_POST()
         elif path.startswith("/cloudfront_front/"):
             path = path[17:]
+            from .cloudfront_front import web_control as cloudfront_web
             controler = cloudfront_web.ControlHandler(self.client_address,
                                                       self.headers,
                                                       self.command, path,
@@ -123,6 +117,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             controler.do_POST()
         elif path.startswith("/heroku_front/"):
             path = path[13:]
+
+            from .heroku_front import web_control as heroku_web
             controler = heroku_web.ControlHandler(self.client_address,
                                                       self.headers,
                                                       self.command, path,
@@ -140,8 +136,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             return self.send_not_found()
 
     def req_log_handler(self):
-        req = urlparse.urlparse(self.path).query
-        reqs = urlparse.parse_qs(req, keep_blank_values=True)
+        req = urllib.parse.urlparse(self.path).query
+        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
         data = ''
 
         if reqs["cmd"]:
@@ -172,8 +168,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 "res": "login_process"
             })
 
-        req = urlparse.urlparse(self.path).query
-        reqs = urlparse.parse_qs(req, keep_blank_values=True)
+        req = urllib.parse.urlparse(self.path).query
+        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
 
         force = False
         if 'force' in reqs:
@@ -204,6 +200,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 "login_account": "%s" % (g.config.login_account),
                 "promote_code": g.promote_code,
                 "promoter": g.promoter,
+                "paypal_button_id": g.paypal_button_id,
+                "plans": g.plans,
                 "balance": "%f" % (g.balance),
                 "quota": "%d" % (g.quota),
                 "quota_list": g.quota_list,
@@ -221,6 +219,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 return True
 
         username    = str(self.postvars['username'][0])
+        #username = utils.get_printable(username)
         password    = str(self.postvars['password'][0])
         promoter = self.postvars.get("promoter", [""])[0]
         is_register = int(self.postvars['is_register'][0])
@@ -248,7 +247,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 }
                 return self.response_json(res_arr)
         else:
-            password_hash = str(hashlib.sha256(password).hexdigest())
+            password_hash = str(hashlib.sha256(utils.to_bytes(password)).hexdigest())
 
         res, reason = proxy_session.request_balance(username, password_hash, is_register,
                                                     update_server=True, promoter=promoter)
@@ -280,8 +279,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         return self.response_json({"res": "success"})
 
     def req_config_handler(self):
-        req = urlparse.urlparse(self.path).query
-        reqs = urlparse.parse_qs(req, keep_blank_values=True)
+        req = urllib.parse.urlparse(self.path).query
+        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
 
         def is_server_available(server):
             if g.selectable and server == '':
@@ -350,7 +349,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             })
 
         plan = self.postvars['plan'][0]
-        if plan not in ["quarterly", "yearly"]:
+        if plan not in g.plans:
             xlog.warn("x_tunnel order plan %s not support", plan)
             return self.response_json({
                 "res": "fail",
@@ -407,8 +406,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.response_json({"res": "success"})
 
     def req_get_history_handler(self):
-        req = urlparse.urlparse(self.path).query
-        reqs = urlparse.parse_qs(req, keep_blank_values=True)
+        req = urllib.parse.urlparse(self.path).query
+        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
 
         req_info = {
             "account": g.config.login_account,

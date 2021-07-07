@@ -1,7 +1,8 @@
 import time
 
+from front_base.connect_manager import NoRescourceException
 from front_base.host_manager import HostManagerBase
-from sni_manager import SniManager
+from . sni_manager import SniManager
 
 
 class HostManager(HostManagerBase):
@@ -20,16 +21,13 @@ class HostManager(HostManagerBase):
         if not appid:
             self.logger.warn("no appid")
             time.sleep(10)
-            raise Exception()
+            raise NoRescourceException("no appid")
 
         return appid + ".appspot.com"
 
     def get_sni_host(self, ip):
+        sni = self.sni_manager.get()
         host = self.get_host()
-        if not host:
-            sni = self.sni_manager.get()
-        else:
-            sni = host
 
         return sni, host
 

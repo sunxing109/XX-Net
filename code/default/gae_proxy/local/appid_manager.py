@@ -44,16 +44,18 @@ class AppidManager(object):
                 time_to_reset = 600 - (time.time() - self.last_reset_time)
                 if time_to_reset > 0:
                     self.logger.warn("all appid out of quota, wait %d seconds to reset", time_to_reset)
-                    time.sleep(time_to_reset)
+                    sleep_end = time.time() + time_to_reset
+                    while len(self.working_appid_list) == 0 & time.time() < sleep_end:
+                        time.sleep(1)
                     return None
                 else:
                     self.logger.warn("reset appid")
                     self.reset_appid()
 
             appid = random.choice(self.working_appid_list)
-            return appid
+            return str(appid)
         else:
-            for _ in xrange(0, 10):
+            for _ in range(0, 10):
                 appid = self.public_appid.get()
                 if appid in self.out_of_quota_appids or appid in self.not_exist_appids:
                     continue

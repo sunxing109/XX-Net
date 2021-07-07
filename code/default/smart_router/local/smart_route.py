@@ -1,15 +1,14 @@
 import time
 import socket
 import struct
-import urlparse
+import urllib.parse
 import io
 import ssl
-import OpenSSL
 
 import utils
 import simple_http_server
-from socket_wrap import SocketWrap
-import global_var as g
+from .socket_wrap import SocketWrap
+from . import global_var as g
 import socks
 
 from xlog import getLogger
@@ -59,6 +58,13 @@ def is_gae_workable():
     return g.gae_proxy.apis.is_workable()
 
 
+def is_ipv6_ok():
+    if not g.gae_proxy:
+        return False
+
+    return g.gae_proxy.check_local_network.IPv6.is_ok()
+
+
 def is_x_tunnel_workable():
     if not g.x_tunnel:
         return False
@@ -69,7 +75,7 @@ def is_x_tunnel_workable():
 def is_clienthello(data):
     if len(data) < 20:
         return False
-    if data.startswith('\x16\x03'):
+    if data.startswith(b'\x16\x03'):
         # TLSv12/TLSv11/TLSv1/SSLv3
         length, = struct.unpack('>h', data[3:5])
         return len(data) == 5 + length
@@ -89,7 +95,7 @@ def have_ipv6(ips):
 
 
 def extract_sni_name(packet):
-    if not packet.startswith('\x16\x03'):
+    if not packet.startswith(b'\x16\x03'):
         return
 
     stream = io.BytesIO(packet)
@@ -113,7 +119,7 @@ def extract_sni_name(packet):
 
 
 def netloc_to_host_port(netloc, default_port=80):
-    if ":" in netloc:
+    if b":" in netloc:
         host, _, port = netloc.rpartition(':')
         port = int(port)
     else:
@@ -122,15 +128,15 @@ def netloc_to_host_port(netloc, default_port=80):
     return host, port
 
 
-def get_sni(sock, left_buf=""):
+def get_sni(sock, left_buf=b""):
     if left_buf:
         leadbyte = left_buf[0]
     else:
         leadbyte = sock.recv(1, socket.MSG_PEEK)
 
-    if leadbyte in ('\x80', '\x16'):
-        if leadbyte == '\x16':
-            for _ in xrange(2):
+    if leadbyte in (b'\x80', b'\x16'):
+        if leadbyte == b'\x16':
+            for _ in range(2):
                 leaddata = left_buf + sock.recv(1024, socket.MSG_PEEK)
                 if is_clienthello(leaddata):
                     try:
@@ -141,11 +147,11 @@ def get_sni(sock, left_buf=""):
 
         raise SniNotExist
 
-    elif leadbyte not in ["G", "P", "D", "O", "H", "T"]:
+    elif leadbyte not in [b"G", b"P", b"D", b"O", b"H", b"T"]:
         raise SniNotExist
 
-    leaddata = ""
-    for _ in xrange(2):
+    leaddata = b""
+    for _ in range(2):
         leaddata = left_buf + sock.recv(65535, socket.MSG_PEEK)
         if leaddata:
             break
@@ -155,7 +161,7 @@ def get_sni(sock, left_buf=""):
     if not leaddata:
         raise SniNotExist
 
-    n1 = leaddata.find("\r\n")
+    n1 = leaddata.find(b"\r\n")
     if n1 <= -1:
         raise SniNotExist
 
@@ -165,37 +171,34 @@ def get_sni(sock, left_buf=""):
         method, url, http_version = words
     elif len(words) == 2:
         method, url = words
-        http_version = "HTTP/1.1"
+        http_version = b"HTTP/1.1"
     else:
         raise SniNotExist
 
-    if method not in ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "TRACE", "PATCH"]:
+    if method not in g.gae_proxy.proxy_handler.GAEProxyHandler.gae_support_methods:
         raise SniNotExist
 
-    n2 = leaddata.find("\r\n\r\n", n1)
+    n2 = leaddata.find(b"\r\n\r\n", n1)
     if n2 <= -1:
         raise SniNotExist
     header_block = leaddata[n1+2:n2]
 
-    lines = header_block.split("\r\n")
+    lines = header_block.split(b"\r\n")
     # path = url
     host = None
     for line in lines:
-        key, _, value = line.rpartition(":")
+        key, _, value = line.rpartition(b":")
         value = value.strip()
-        if key.lower() == "host":
+        if key.lower() == b"host":
             host, port = netloc_to_host_port(value)
             break
-    if host is None:
+    if host is None or host == b"":
         raise SniNotExist
 
     return host
 
 
-def do_direct(sock, host, ips, port, client_address, left_buf=""):
-    if not g.config.auto_direct:
-        raise ConnectFail()
-
+def do_direct(sock, host, ips, port, client_address, left_buf=b""):
     remote_sock = g.connect_manager.get_conn(host, ips, port)
     if not remote_sock:
         raise ConnectFail()
@@ -206,10 +209,7 @@ def do_direct(sock, host, ips, port, client_address, left_buf=""):
     g.pipe_socks.add_socks(sock, remote_sock)
 
 
-def do_redirect_https(sock, host, ips, port, client_address, left_buf=""):
-    if not g.config.auto_direct:
-        raise ConnectFail()
-
+def do_redirect_https(sock, host, ips, port, client_address, left_buf=b""):
     remote_sock = g.connect_manager.get_conn(host, ips, 443)
     if not remote_sock:
         raise RedirectHttpsFail()
@@ -228,7 +228,7 @@ def do_redirect_https(sock, host, ips, port, client_address, left_buf=""):
     g.pipe_socks.add_socks(sock, sw)
 
 
-def do_socks(sock, host, port, client_address, left_buf=""):
+def do_socks(sock, host, port, client_address, left_buf=b""):
     if not g.x_tunnel:
         raise XTunnelNotRunning()
 
@@ -248,14 +248,14 @@ def do_socks(sock, host, port, client_address, left_buf=""):
     g.x_tunnel.global_var.session.conn_list[conn_id].start(block=True)
 
 
-def do_unwrap_socks(sock, host, port, client_address, req, left_buf=""):
+def do_unwrap_socks(sock, host, port, client_address, req, left_buf=b""):
     if not g.x_tunnel:
         return
 
     try:
         remote_sock = socks.create_connection(
             (host, port),
-            proxy_type="socks5h", proxy_addr="127.0.0.1", proxy_port=1080, timeout=15
+            proxy_type="socks5h", proxy_addr="127.0.0.1", proxy_port=g.x_tunnel_socks_port, timeout=15
         )
     except Exception as e:
         xlog.warn("do_unwrap_socks connect to x-tunnel for %s:%d proxy fail.", host, port)
@@ -290,10 +290,10 @@ def do_unwrap_socks(sock, host, port, client_address, req, left_buf=""):
 def do_gae(sock, host, port, client_address, left_buf=""):
     sock.setblocking(1)
     if left_buf:
-        schema = "http"
+        schema = b"http"
     else:
         leadbyte = sock.recv(1, socket.MSG_PEEK)
-        if leadbyte in ('\x80', '\x16'):
+        if leadbyte in (b'\x80', b'\x16'):
             if host != fake_host and not g.config.enable_fake_ca:
                 raise DontFakeCA()
 
@@ -302,24 +302,24 @@ def do_gae(sock, host, port, client_address, left_buf=""):
             except Exception as e:
                 raise SslWrapFail()
 
-            schema = "https"
+            schema = b"https"
         else:
-            schema = "http"
+            schema = b"http"
 
     sock.setblocking(1)
     xlog.debug("host:%s:%d do gae", host, port)
     req = g.gae_proxy.proxy_handler.GAEProxyHandler(sock._sock, client_address, None, xlog)
     req.parse_request()
 
-    if req.path[0] == '/':
-        url = '%s://%s%s' % (schema, req.headers['Host'], req.path)
+    if req.path[0] == b'/':
+        url = b'%s://%s%s' % (schema, req.headers[b'Host'], req.path)
     else:
         url = req.path
 
-    if url in ["http://www.twitter.com/xxnet",
-                    "https://www.twitter.com/xxnet",
-                    "http://www.deja.com/xxnet",
-                    "https://www.deja.com/xxnet"
+    if url in [b"http://www.twitter.com/xxnet",
+                    b"https://www.twitter.com/xxnet",
+                    b"http://www.deja.com/xxnet",
+                    b"https://www.deja.com/xxnet"
                     ]:
         # for web_ui status page
         # auto detect browser proxy setting is work
@@ -327,7 +327,7 @@ def do_gae(sock, host, port, client_address, left_buf=""):
         req.wfile.write(req.self_check_response_data)
         return
 
-    if req.upgrade == "websocket":
+    if req.upgrade == b"websocket":
         xlog.debug("gae %s not support WebSocket", req.path)
         raise NotSupported(req, sock)
 
@@ -335,15 +335,16 @@ def do_gae(sock, host, port, client_address, left_buf=""):
         xlog.debug("gae %s path len exceed 1024 limit", req.path)
         raise NotSupported(req, sock)
 
-    if req.command not in ["GET", "PUT", "POST", "DELETE", "PATCH", "HEAD", "OPTIONS"]:
+    if req.command not in req.gae_support_methods:
         xlog.debug("gae %s %s, method not supported", req.command, req.path)
         raise NotSupported(req, sock)
 
-    req.parsed_url = urlparse.urlparse(req.path)
+    req.parsed_url = urllib.parse.urlparse(req.path)
     req.do_METHOD()
 
 
 def try_loop(scense, rule_list, sock, host, port, client_address, left_buf=""):
+
     start_time = time.time()
 
     for rule in rule_list:
@@ -352,20 +353,44 @@ def try_loop(scense, rule_list, sock, host, port, client_address, left_buf=""):
                 if port != 80:
                     continue
 
-                ips = g.dns_srv.query(host)
+                if is_ipv6_ok():
+                    query_type = None
+                else:
+                    query_type = 1
+                ips = g.dns_query.query(host, query_type)
+
                 do_redirect_https(sock, host, ips, port, client_address, left_buf)
                 xlog.info("%s %s:%d redirect_https", scense, host, port)
                 return
 
             elif rule == "direct":
-                ips = g.dns_srv.query(host)
+                if is_ipv6_ok():
+                    query_type = None
+                else:
+                    query_type = 1
+                ips = g.dns_query.query(host, query_type)
+
                 do_direct(sock, host, ips, port, client_address, left_buf)
                 xlog.info("%s %s:%d direct", scense, host, port)
+                return
+
+            elif rule == "direct6":
+                if not is_ipv6_ok():
+                    continue
+
+                ips = g.dns_query.query(host, 28)
+                if not ips:
+                    continue
+                do_direct(sock, host, ips, port, client_address, left_buf)
+                xlog.info("%s %s:%d direct6", scense, host, port)
                 return
 
             elif rule == "gae":
                 if not is_gae_workable() and host != fake_host:
                     xlog.debug("%s gae host:%s:%d, but gae not work", scense, host, port)
+                    continue
+
+                if not g.domain_cache.accept_gae(host):
                     continue
 
                 try:
@@ -380,9 +405,9 @@ def try_loop(scense, rule_list, sock, host, port, client_address, left_buf=""):
                     left_bufs = [req.raw_requestline]
                     for k in req.headers:
                         v = req.headers[k]
-                        left_bufs.append("%s: %s\r\n" % (k, v))
-                    left_bufs.append("\r\n")
-                    left_buf = "".join(left_bufs)
+                        left_bufs.append(b"%s: %s\r\n" % (k, v))
+                    left_bufs.append(b"\r\n")
+                    left_buf = b"".join(left_bufs)
 
                     return do_unwrap_socks(e.sock, host, port, client_address, req, left_buf=left_buf)
                 except SniNotExist:
@@ -426,6 +451,8 @@ def try_loop(scense, rule_list, sock, host, port, client_address, left_buf=""):
 
 
 def handle_ip_proxy(sock, ip, port, client_address):
+    xlog.debug("connect to %s:%d from:%s:%d", ip, port, client_address[0], client_address[1])
+
     if not isinstance(sock, SocketWrap):
         sock = SocketWrap(sock, client_address[0], client_address[1])
 
@@ -437,34 +464,37 @@ def handle_ip_proxy(sock, ip, port, client_address):
     if rule:
         return try_loop("ip user", [rule], sock, ip, port, client_address)
 
-    if g.config.auto_direct and g.ip_region.check_ip(ip):
-        rule_list = ["direct", "gae", "socks", "redirect_https"]
-    else:
-        if g.config.auto_direct or g.config.auto_gae:
-            try:
-                host = get_sni(sock)
-                if host:
-                    return handle_domain_proxy(sock, host, port, client_address)
-            except SniNotExist as e:
-                xlog.debug("ip:%s:%d get sni fail", ip, port)
+    try:
+        host = get_sni(sock)
+        if host:
+            return handle_domain_proxy(sock, host, port, client_address)
+    except SniNotExist as e:
+        xlog.debug("ip:%s:%d get sni fail", ip, port)
 
-        if not g.config.auto_direct:
-            rule_list = ["socks"]
+    record = g.ip_cache.get(ip)
+    if record and record["r"] != "unknown":
+        rule = record["r"]
+        if rule == "gae":
+            rule_list = ["gae", "socks", "direct"]
+        elif rule == "socks":
+            rule_list = ["socks", "gae", "direct"]
         else:
-            record = g.ip_cache.get(ip)
-            if record and record["r"] == "socks":
-                rule_list = ["socks"]
-            else:
-                rule_list = ["direct", "socks"]
+            rule_list = ["direct", "gae", "socks"]
+    elif g.ip_region.check_ip(ip):
+        rule_list = ["direct", "socks"]
+    else:
+        rule_list = ["direct", "gae", "socks"]
 
-    if not g.config.auto_direct and "direct" in rule_list:
-        try:
-            rule_list.remove("direct")
-            rule_list.remove("redirect_https")
-        except:
-            pass
+    if not g.config.auto_direct:
+        for rule in ["direct", "redirect_https"]:
+            try:
+                rule_list.remove(rule)
+            except:
+                pass
+    elif g.config.auto_direct6 and "direct" in rule_list:
+        rule_list.insert(rule_list.index("direct"), "direct6")
 
-    if not g.config.auto_gae and "gae" in rule_list:
+    if not g.config.enable_fake_ca and port == 443 or not g.config.auto_gae:
         try:
             rule_list.remove("gae")
         except:
@@ -475,12 +505,15 @@ def handle_ip_proxy(sock, ip, port, client_address):
 
 def handle_domain_proxy(sock, host, port, client_address, left_buf=""):
     global fake_host
+    xlog.debug("connect to %s:%d from:%s:%d", host, port, client_address[0], client_address[1])
+
     if not fake_host and g.gae_proxy:
         fake_host = g.gae_proxy.web_control.get_fake_host()
 
     if not isinstance(sock, SocketWrap):
         sock = SocketWrap(sock, client_address[0], client_address[1])
 
+    # Check user rules
     sock.target = "%s:%d" % (host, port)
     rule = g.user_rules.check_host(host, port)
     if not rule:
@@ -497,46 +530,44 @@ def handle_domain_proxy(sock, host, port, client_address, left_buf=""):
         sock.close()
         return
 
-    #ips = g.dns_srv.query(host)
+    #ips = g.dns_query.query(host)
     #if check_local_network.IPv6.is_ok() and have_ipv6(ips) and port == 443:
     #    rule_list = ["direct", "gae", "socks", "redirect_https"]
     # gae is more faster then direct.
 
-    record = g.domain_cache.get(host)
-    if record and record["r"] != "unknown":
-        rule = record["r"]
+    rule = g.domain_cache.get_rule(host)
+    if rule != "unknown":
         if rule == "gae":
             rule_list = ["gae", "socks", "redirect_https", "direct"]
+        elif rule == "socks":
+            rule_list = ["socks", "gae", "redirect_https", "direct"]
         else:
             rule_list = ["direct", "gae", "socks", "redirect_https"]
 
         if not g.domain_cache.accept_gae(host):
             rule_list.remove("gae")
-    elif g.gfwlist.is_white(host):
+    elif g.gfwlist.in_white_list(host):
         rule_list = ["direct", "gae", "socks", "redirect_https"]
-    elif g.gfwlist.check(host):
+    elif g.gfwlist.in_block_list(host):
         rule_list = ["gae", "socks", "redirect_https", "direct"]
     else:
-        ips = g.dns_srv.query(host)
+        ips = g.dns_query.query_recursively(host, 1)
         if g.ip_region.check_ips(ips):
-            rule_list = ["direct", "gae", "socks", "redirect_https"]
+            rule_list = ["direct", "socks", "redirect_https"]
         else:
-            rule_list = ["gae", "socks", "redirect_https", "direct"]
+            rule_list = ["direct", "gae", "socks", "redirect_https"]
 
-    if not g.config.auto_direct and "direct" in rule_list:
-        try:
-            rule_list.remove("direct")
-            rule_list.remove("redirect_https")
-        except:
-            pass
+    # check config.
+    if not g.config.auto_direct:
+        for rule in ["direct", "redirect_https"]:
+            try:
+                rule_list.remove(rule)
+            except:
+                pass
+    elif g.config.auto_direct6 and "direct" in rule_list:
+        rule_list.insert(rule_list.index("direct"), "direct6")
 
-    if not g.config.enable_fake_ca and port == 443 and "gae" in rule_list:
-        try:
-            rule_list.remove("gae")
-        except:
-            pass
-
-    if not g.config.auto_gae and "gae" in rule_list:
+    if not g.config.enable_fake_ca and port == 443 or not g.config.auto_gae:
         try:
             rule_list.remove("gae")
         except:

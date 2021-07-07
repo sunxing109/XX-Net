@@ -6,7 +6,7 @@ import socket
 
 import utils
 
-import global_var as g
+from . import global_var as g
 from xlog import getLogger
 xlog = getLogger("smart_router")
 
@@ -54,9 +54,7 @@ class PipeSocks(object):
 
     def add_socks(self, s1, s2):
         for s in [s1, s2]:
-            if isinstance(s._sock, socket._closedsocket) or \
-                    (isinstance(s._sock, ssl.SSLSocket) and
-                     isinstance(s._sock._sock, socket._closedsocket)):
+            if s._sock._closed:
                 xlog.warn("try to add_socks closed socket:%s %s", s1, s2)
                 s1.close()
                 s2.close()
@@ -134,11 +132,17 @@ class PipeSocks(object):
 
         while self.running:
             if not self.error_set:
-                time.sleep(1)
+                time.sleep(0.1)
                 continue
 
+            for s1 in self.error_set:
+                s2 = self.sock_dict[s1]
+                if s2 not in self.sock_dict and \
+                        s1 not in self.read_set and s1 not in self.write_set:
+                    self.close(s1, "miss")
+
             try:
-                r, w, e = select.select(self.read_set, self.write_set, self.error_set, 0.1)
+                r, w, error_set = select.select(self.read_set, self.write_set, self.error_set, 0.1)
                 for s1 in list(r):
                     if s1 not in self.read_set:
                         continue
@@ -165,11 +169,11 @@ class PipeSocks(object):
                                     s1.recved_times == 1 and \
                                     s2.port == 443 and \
                                     d[0] == '\x16' and \
-                            g.gfwlist.check(s2.host):
+                            g.gfwlist.in_block_list(s2.host):
                         p1 = d.find(s2.host)
                         if p1 > 1:
-                            if "google" in s2.host:
-                                p2 = d.find("google") + 3
+                            if b"google" in s2.host:
+                                p2 = d.find(b"google") + 3
                             else:
                                 p2 = p1 + len(s2.host) - 6
 
@@ -184,13 +188,16 @@ class PipeSocks(object):
                                 continue
 
                             s2.add_dat(d2)
-                            d = ""
+                            d = b""
                             xlog.debug("pipe send split SNI:%s", s2.host)
 
                     if s2.buf_size == 0:
                         try:
+                            sended = 0
                             sended = s2.send(d)
                             # xlog.debug("direct send %d to %s from:%s", sended, s2, s1)
+                        except BlockingIOError as e:
+                            pass
                         except Exception as e:
                             self.close(s2, "w")
                             continue
@@ -219,14 +226,17 @@ class PipeSocks(object):
                         self.try_remove(self.write_set, s1)
                         continue
 
-                    while True:
+                    while s1.buf_num:
                         dat = s1.get_dat()
                         if not dat:
                             self.close(s1, "n")
                             break
 
                         try:
+                            sended = 0
                             sended = s1.send(dat)
+                        except BlockingIOError as e:
+                            pass
                         except Exception as e:
                             self.close(s1, "w")
                             break
@@ -235,9 +245,6 @@ class PipeSocks(object):
                             s1.restore_dat(dat[sended:])
                             break
 
-                    if s1.buf_size == 0:
-                        self.try_remove(self.write_set, s1)
-
                     if s1.buf_size < self.buf_size:
                         if s1 not in self.sock_dict:
                             continue
@@ -245,15 +252,15 @@ class PipeSocks(object):
                         s2 = self.sock_dict[s1]
                         if s2 not in self.read_set and s2 in self.sock_dict:
                             self.read_set.append(s2)
+                        elif s1.buf_size == 0 and s2.is_closed():
+                            self.close(s1, "n")
 
-                for s1 in list(e):
+                for s1 in list(error_set):
                     self.close(s1, "e")
             except Exception as e:
                 xlog.exception("pipe except:%r", e)
                 for s in list(self.error_set):
-                    if isinstance(s._sock, socket._closedsocket) or \
-                            (isinstance(s._sock, ssl.SSLSocket) and
-                             isinstance(s._sock._sock, socket._closedsocket)):
+                    if s._sock._closed:
                         xlog.warn("socket %s is closed", s)
                         self.close(s, "e")
 

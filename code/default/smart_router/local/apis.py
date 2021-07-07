@@ -1,6 +1,6 @@
 
-import global_var as g
-import connect_manager
+from . import global_var as g
+from . import connect_manager
 from xlog import getLogger
 xlog = getLogger("smart_router")
 
@@ -14,7 +14,7 @@ def set_proxy(args):
     try:
         g.config.PROXY_PORT = int(args["port"])
     except:
-        g.config.PROXY_POT = 0
+        g.config.PROXY_PORT = 0
 
         g.config.PROXY_USER = args["user"]
     g.config.PROXY_PASSWD = args["passwd"]

@@ -83,7 +83,7 @@
 5isotoi5.org
 5maodang.com
 63i.com
-64memo
+64memo.com
 64museum.org
 64tianwang.com
 64wiki.com
@@ -117,7 +117,6 @@ a-normal-day.com
 a.hao123.com
 a248.e.akamai.net
 a5.com.ru
-aHR0cHM6Ly95ZWNsLm5ldA
 aa-usa.org
 aamacau.com
 abc.com
@@ -278,7 +277,6 @@ aolchannels.aol.com
 aolnews.com
 aomiwang.com
 apetube.com
-app-measurement.com
 api-secure.recaptcha.net
 api-verify.recaptcha.net
 api.ai
@@ -296,6 +294,7 @@ apkmonk.com
 apkplz.com
 apkpure.com
 aplusvpn.com
+app-measurement.com
 app.box.com
 app.heywire.com
 app.tutanota.com
@@ -1097,6 +1096,7 @@ delcamp.net
 delicious.com
 demo.opera-mini.net
 democrats.org
+denis.stalker.upeer.me
 derekhsu.homeip.net
 desc.se
 design.google
@@ -1219,6 +1219,7 @@ duplicati.com
 dupola.com
 dupola.net
 dushi.ca
+dutchtracking.com
 dvorak.org
 dw-world.com
 dw-world.de
@@ -1315,7 +1316,6 @@ emuparadise.me
 en.favotter.net
 en.hao123.com
 enanyang.my
-ends
 enewstree.com
 enfal.de
 engagedaily.org
@@ -1602,7 +1602,6 @@ freeman2.com
 freemoren.com
 freemorenews.com
 freemuse.org
-freenet
 freenet-china.org
 freenetproject.org
 freenewscn.com
@@ -2094,7 +2093,6 @@ hkfront.org
 hkgolden.com
 hkgreenradio.org
 hkheadline.com
-hkheadline.com*blog
 hkhkhk.com
 hkhrc.org.hk
 hkhrm.org.hk
@@ -2252,13 +2250,11 @@ idv.tw
 ieasy5.com
 ied2k.net
 ienergy1.com
-if.
 ifan.cz.cc
 ifanqiang.com
 ifcss.org
 ifjc.org
 ifreewares.com
-ift.
 ift.tt
 igcd.net
 igfw.net
@@ -2716,8 +2712,6 @@ lushstories.com
 luxebc.com
 lvhai.org
 lvv2.com
-ly
-lyfhk.ne
 lyfhk.net
 lzmtnews.org
 m-sport.co.uk
@@ -3264,12 +3258,14 @@ ontrac.com
 oopsforum.com
 opedialogue.org
 open.com.hk
+open.demonii.si
 openallweb.com
 opendemocracy.net
 opendn.xyz
 openervpn.in
 openid.net
 openleaks.org
+opentracker.xyz
 openvpn.net
 openwebster.com
 openwrt.org.cn
@@ -3492,7 +3488,6 @@ premeforwindows7.com
 presentationzen.com
 presidentlee.tw
 prestige-av.com
-prisoner-state-secret-journal-premier
 prisoneralert.com
 pritunl.com
 privacybox.de
@@ -3613,6 +3608,7 @@ rcinet.ca
 rconversation.blogs.com
 rd.com
 rdio.com
+re-tracker.uz
 read01.com
 read100.com
 readingtimes.com.tw
@@ -4576,8 +4572,7 @@ ukcdp.co.uk
 ukliferadio.co.uk
 ulike.net
 ulop.net
-ultrareach
-ultrasurf
+ultrasurf.us
 ultravpn.fr
 ultraxs.com
 umich.edu
@@ -5192,7 +5187,7 @@ zhanlve.org
 zhao.1984.city
 zhao.jinhai.de
 zhenghui.org
-zhengjian
+zhengjian.org
 zhengwunet.org
 zhenlibu.info
 zhenlibu1984.com
